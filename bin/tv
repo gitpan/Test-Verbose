@@ -267,7 +267,11 @@ specified, respectively.
 
 =item -v, --verbose
 
-Print out the command to be run.
+Disable any -q, -qq or -qqq options that occur before the -v option on
+the command line (notably any that are set in a .tvrc file).  Has no
+effect unless one of those options is passed.  May be overridden by -q,
+-qq or -qqq occuring later on the command line.  Not settable from a
+.tvrc file for now.
 
 =item --debug-tv
 
@@ -325,26 +329,31 @@ sub usage {
 my %options;
 GetOptions(
     "n|dry-run|recon|just-print!"       => \$options{JustPrint},
-    "compile|c"                         => \$options{Compile},
-    "no-compile"                        => \$options{NoCompile},
+    "compile|c!"                        => \$options{Compile},
+#    "no-compile!"                       => \$options{NoCompile},
     "dd|debug-stop!"                    => \$options{Debug},
     "d|debug!"                          => \$options{DebugRun},
     "debug-tv!"                         => sub { $ENV{TVDEBUG} = 1 },
-    "extutils|ext-utils"                => \$options{ExtUtils},
-    "no-log"                            => \$options{NoLog},
+    "extutils|ext-utils!"               => \$options{ExtUtils},
+    "no-log!"                           => \$options{NoLog},
     "no-pod|no-podchecker!"             => \$options{NoPOD},
-    "pod|POD"                           => \$options{TestPOD},
-    "pure-perl"                         => \$options{PurePerl},
-    "quiet|q"                           => \$options{Quiet},
-    "qq"                                => \$options{DoubleQuiet},
-    "qqq"                               => \$options{TripleQuiet},
-    "tests"                             => \$options{RunTests},
-    "no-tests"                          => \$options{NoTests},
+    "pod|test-pod!"                     => \$options{TestPOD},
+    "pure-perl!"                        => \$options{PurePerl},
+    "quiet|q!"                          => \$options{Quiet},
+    "qq!"                               => \$options{DoubleQuiet},
+    "qqq!"                              => \$options{TripleQuiet},
+    "tests!"                            => \$options{RunTests},
+#    "no-tests!"                         => \$options{NoTests},
     "h|help|?" => sub { usage },
-    "v|verbose"                         => \$options{Verbose},
+    "v|verbose!"                         => sub {
+        $options{Quiet} = $options{DoubleQuiet} = $options{TripleQuiet} = 0
+            if $_[1];
+    },
 ) or usage "";
 
-eval "use Test::Verbose qw( test_verbose ); 1" or die $@;
+use Test::Verbose qw( is_win32 test_verbose );
 
-exit test_verbose( @ARGV, \%options );
+@ARGV = map glob, @ARGV if is_win32;
+
+exit test_verbose @ARGV, \%options;
 

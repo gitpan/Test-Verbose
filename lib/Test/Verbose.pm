@@ -1,6 +1,6 @@
 package Test::Verbose;
 
-$VERSION = 0.009;
+$VERSION = 0.010;
 
 #BEGIN {
 #    *CORE::GLOBAL::chdir = \&my_chdir;
@@ -123,10 +123,11 @@ before any tests.  This allows you to set important env. vars:
 
     $ENV{DBI_USER}="barries";
     $ENV{DBI_PASS}="yuck";
-    1;
 
-The trailing "1;" is to ensure that this file returns a TRUE (in the sense
-of Perl truth) value, otherwise a fatar error will be reported.
+    $tv->pure_perl = 1;
+
+This support is experimental but should be ok for now.  Options set here
+may be overridden on the command line.
 
 =head1 FUNCTIONS
 
@@ -139,12 +140,14 @@ Shortcut for
 
 =cut
 
-@EXPORT_OK = qw( test_verbose );
+@EXPORT_OK = qw( test_verbose is_win32 );
 @ISA = qw( Exporter );
 
 use strict;
 
 use constant debugging => $ENV{TVDEBUG} ? 1 : 0;
+use constant is_win32  => $^O =~ /Win32/i;
+use constant MAKE      => is_win32 ? "nmake.exe" : "make";
 
 BEGIN {
     require Exporter;
@@ -155,7 +158,7 @@ BEGIN {
 
 sub test_verbose {
     my $options = ref $_[-1] eq "HASH" ? pop : {};
-    Test::Verbose->new( %$options )->test( @_ );
+    return Test::Verbose->new( %$options )->test( @_ );
 }
 
 =head1 METHODS
@@ -197,13 +200,23 @@ of perl.
 
 sub new {
     my $proto = shift;
-    my $self = bless { @_ }, ref $proto ? ref $proto : $proto;
+    my $self = bless {}, ref $proto ? ref $proto : $proto;
+
+    $self->load_rc;
+
+    my %options = @_;
+
+    for ( keys %options ) {
+        $self->{$_} = $options{$_}
+            if defined $options{$_};
+    }
+
     $self->{TestPOD} = $self->{Compile} = $self->{RunTests} = 1
         unless $self->{TestPOD} || $self->{Compile} || $self->{RunTests};
 
-    $self->{TestPOD}       = 0 if $self->{NoPOD};
-    $self->{Compile} = 0 if $self->{NoCompile};
-    $self->{RunTests}      = 0 if $self->{NoTests};
+    $self->{TestPOD}   = 0 if $self->{NoPOD};
+    $self->{Compile}   = 0 if $self->{NoCompile};
+    $self->{RunTests}  = 0 if $self->{NoTests};
 
     $self->{DoubleQuiet} ||= $self->{TripleQuiet};
     $self->{Quiet}       ||= $self->{DoubleQuiet};
@@ -211,11 +224,74 @@ sub new {
     return $self;
 }
 
+=item load_rc
+
+Scans for and loads the .tvrc file.
+
+NOTE: may be expanded in the future to load multiple RC files.
+
+So far, only a few attributes are available, will add more as I need
+to.
+
+For 100% pure perl modules, a common .tvrc is:
+
+    $tv->pure_perl = 1;
+
+.  And a way to shush tv from printing out all the good news is:
+
+    $tv->quiet = 1;  
+
+=cut
+
+sub load_rc {
+    my $self = shift;
+
+    my $rc_file = ".tvrc";
+
+    my $d = $self->dir;
+
+    $self->{ConfigClass} = join "", "Test::Verbose::Config::", int $self;
+    
+    $rc_file = -e $rc_file
+        ? do {
+            open RC_FILE, "<$rc_file" or die "$!: $rc_file";
+            local $/ = undef;
+            my $code = <RC_FILE>;
+            close RC_FILE;
+            my $self_class = ref $self;
+            bless $self, $self->{ConfigClass};
+            my $fn = File::Spec->rel2abs( $rc_file, $d );
+            join "",
+                "package $self->{ConfigClass};\n",
+                "no strict;\n",
+                "\@ISA = qw( ", $self_class, " );\n",
+                "use strict;\n",
+                "our \$tv;",
+                "sub AUTOLOAD {};\n",
+                "#line 1 $fn\n",
+                $code,
+                "\n",
+                "1;";
+        }
+        : undef;
+
+    if ( defined $rc_file ) {
+        {
+            no strict "refs";
+            ${"$self->{ConfigClass}::tv"} = $self;
+        }
+
+        eval $rc_file or die $@;
+    }
+
+}
+
 =item dir
 
     my $dir = $tv->dir;
     $tv->dir( undef );   ## clear old setting
     $tv->dir( "foo" );   ## prevent chdir( ".." ) searching
+    $tv->dir = "foo";
 
 Looks for t/ or lib/ in the current directory or in any parent directory.
 C<chdir()>s up the directory tree until t/ is found, then back to the
@@ -227,7 +303,7 @@ for a name,
 
 =cut
 
-sub dir {
+sub dir: lvalue {
     my $self = shift;
 
     $self->{Dir} = shift if @_;
@@ -252,9 +328,58 @@ sub dir {
         chdir $cwd or die "tv: $! chdir()ing back to '$cwd'";
     }
 
-    return $self->{Dir};
+    $self->{Dir};
 }
 
+
+=item pure_perl
+
+    $tv->pure_perl = 1;
+    print $tv->pure_perl;
+
+=cut
+
+sub pure_perl: lvalue {
+    my $self = shift;
+    $self->{PurePerl} = shift if @_;
+    $self->{PurePerl};
+}
+
+=item quiet
+
+    $tv->quiet = 1;
+
+=cut
+
+sub quiet: lvalue {
+    my $self = shift;
+    $self->{Quiet} = shift if @_;
+    $self->{Quiet};
+}
+
+=item double_quiet
+
+    $tv->double_quiet = 1;
+
+=cut
+
+sub double_quiet: lvalue {
+    my $self = shift;
+    $self->{DoubleQuiet} = shift if @_;
+    $self->{DoubleQuiet};
+}
+
+=item triple_quiet
+
+    $tv->triple_quiet = 1;
+
+=cut
+
+sub triple_quiet: lvalue {
+    my $self = shift;
+    $self->{DoubleQuiet} = shift if @_;
+    $self->{DoubleQuiet};
+}
 
 =item is_test_script
 
@@ -514,7 +639,8 @@ sub _scan_source_files {
         while (<F>) {
             if ( /^=for\s+test_scripts?\s+(.*)/ ) {
                 my @scripts = _slurp_and_split;
-                warn "tv: $abs_fn, $package =for test_scripts ", join( " ", @scripts ), "\n"
+                warn "tv: $abs_fn, $package =for test_scripts ",
+                    join( " ", @scripts ), "\n"
                     if debugging;
                 push @{$self->{Files}->{$abs_fn}}, @scripts;
                 push @{$self->{Packages}->{$package}}, @scripts;
@@ -676,6 +802,17 @@ sub _esc {
         @_;
 }
 
+sub call_config_handler {
+    my $self = shift;
+    my $handler = shift;
+
+    my $sub = $self->{ConfigClass}->can( $handler );
+    return unless $sub;
+
+    $sub->( $self, @_ );
+}
+
+
 sub test {
     my $self = shift;
 
@@ -683,24 +820,10 @@ sub test {
     my $d = $self->dir;
     chdir $d or die "tv: $!: $d";
 
-    my $rc_file = ".tvrc";
-
     ## TODO: an option to name the log file.
     open LOG, ">tv.log" unless $self->{NoLog};
-    
-    $rc_file = -e $rc_file
-        ? do {
-            open RC_FILE, "<$rc_file" or die "$!: $rc_file";
-            local $/ = undef;
-            my $code = <RC_FILE>;
-            close RC_FILE;
-            my $fn = File::Spec->rel2abs( $rc_file, $d );
-            join "", "#line 1 $fn\n", $code;
-        }
-        : undef;
 
-    eval $rc_file or die $@
-       if defined $rc_file;
+    $self->call_config_handler( "before_testing_do", @_ );
 
     $self->{PodChecks}     = [];
     $self->{CompileChecks} = [];
@@ -713,7 +836,7 @@ sub test {
         ## newer perl.  Could lead to unexpected behavior, but very, very
         ## probably not.
         warn "tv\$ podchecker ", join( " ", _esc @{$self->{PodChecks}} ), "\n"
-            if $self->{JustPrint} || $self->{Verbose};
+            if $self->{JustPrint} || !$self->{DoubleQuiet};
         ## TODO: log the output of this
         system "podchecker", @{$self->{PodChecks}}
             and die "tv: POD checks failed, not running further tests.\n"
@@ -721,8 +844,10 @@ sub test {
     }
 
     if ( $self->{Compile} && @{$self->{CompileChecks}} ) {
-        warn "tv\$ perl -Ilib -cw ", join( " ", _esc @{$self->{CompileChecks}} ), "\n"
-            if $self->{JustPrint} || $self->{Verbose};
+        warn "tv\$ perl -Ilib -cw ",
+            join( " ", _esc @{$self->{CompileChecks}} ),
+            "\n"
+            if $self->{JustPrint} || !$self->{DoubleQuiet};
 
         ## TODO: log the output of this
         system $^X, "-Ilib", "-cw", @{$self->{CompileChecks}}
@@ -733,14 +858,14 @@ sub test {
     $self->unhandled( @{$self->{Unhandled}} )
         if @{$self->{Unhandled}};
 
-    return unless $self->{RunTests} && @scripts;
+    return 0 unless $self->{RunTests} && @scripts;
 
     my $debug = $self->{Debug} || $self->{DebugRun};
 
     my @cmds =
         $debug
                 ? (
-                    [ "make", "pm_to_blib" ],
+                    [ MAKE, "pm_to_blib" ],
                     map [ $^X, "-w", "-Iblib/lib", "-d", $_ ], @scripts
                 )
             : $self->{PurePerl}
@@ -752,7 +877,7 @@ sub test {
                     "test_harness(1,'lib')",
                     @scripts
                 ]
-                : [ qw( make test TEST_VERBOSE=1 ),
+                : [ MAKE, qw( test TEST_VERBOSE=1 ),
                     @_
                         ? "TEST_FILES=" . join " ", @scripts
                         : (),
@@ -784,7 +909,7 @@ TOHERE
         $cmd = qq{PERLDB_OPTS="$db_opts" $cmd} if length $db_opts;
 
         warn "tv\$ $cmd\n"
-            if $self->{JustPrint} || $self->{Verbose};
+            if $self->{JustPrint} || !$self->{DoubleQuiet};
 
         next if $self->{JustPrint};
 
@@ -826,7 +951,7 @@ TOHERE
                 && ! $self->{DoubleQuiet}
             ) {
                 if ( defined $cmd && @cmds > 1 ) {
-                    print $cmd, ":\n" unless $self->{Verbose};
+                    print $cmd, ":\n" if $self->{Quiet};
                     $cmd = undef;
                 }
                 print $saw_lone_not ? "not $_" : $_;
@@ -839,7 +964,7 @@ TOHERE
         ## the All tests sucessful.  At least when I'm driving it ;).
         if ( ! $self->{TripleQuiet} && @out ) {
             if ( defined $cmd && @cmds > 1 ) {
-                print $cmd, ":\n" unless $self->{Verbose};
+                print $cmd, ":\n" if $self->{DoubleQuiet};
                 $cmd = undef;
             }
             print

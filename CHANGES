@@ -1,5 +1,20 @@
 CHANGES file for Test::Verbose
 
+0.010 NOT RELEASED YET
+    - tv now globs on Win32
+    - nmake now used on Win32
+    - --verbose no longer require to show which test script is being run
+    - --verbose now merely undoes any preceding -q, -qq, or -qqq options
+    - .tvrc files may now do:
+
+        $tv->pure_perl = 1;
+        $tv->quiet     = 1;
+
+    - No more whinging about duplicate "pod|POD" options spec
+      (Paul Hoffman <nkuitse a t nkuitse com>)
+    - Return a 0, not an undef, if no tests should be run
+      (Paul Hoffman <nkuitse a t nkuitse com>)
+
 0.009 Fri Apr  4 09:29:39 EST 2003
     - Remove spurious debugging noise.
     - Added --pod, --no-pod, --compile, --no-compile, --source, --no-source
