@@ -1,0 +1,172 @@
+#!/usr/local/bin/perl -w
+
+use Test::Verbose qw( test_verbose );
+
+=head1 NAME
+
+   tv - Run 'make TEST_VERBOSE=1' on one or more test files
+
+=head1 SYNOPSIS
+
+   $ tv t/foo.t         ## make TEST_VERBOSE=1 TEST_FILES=t/foo.t
+   $ tv Foo.pm          ## Run all t/*.t test scripts for Foo.pm
+   $ tv t/foo.t t/bar.t ## make TEST_VERBOSE=1 "TEST_FILES=t/foo.t t/bar.t"
+   $ tv t/*             ## Run all test scripts in t
+   $ tv lib             ## Test all modules in lib
+
+=head1 DESCRIPTION
+
+Given one or more test scripts, Perl source code files, directories
+containing them, or Perl package names, tv tries to select and run the
+appropriate test scripts using "make test TEST_VERBOSE=1 TEST_FILES=..."
+where the "..." are the selected test scripts.
+
+This is especially useful in an editor when mapped to a key that saves
+and runs tv on the current file or just as shorthand for a frequent but
+laborious make incantation.
+
+=head2 Test scripts
+
+When a test script is given as a parameter, it is selected, so
+
+    tv t/foo.t
+    
+and
+
+    tv t/*.t
+
+do the obvious things.
+
+When something other than a test script (a file whose name ends in ".t")
+is specified, source files and test scripts are scanned to figure out
+what test scripts to run.
+
+=head2 Source Files
+
+If a source file name (or directory hierarchy of them) is given, then
+those files and all test scripts are scanned, and any test scripts
+pertaining to the named source files and any packages it defines are
+selected.  This allows
+
+    tv Foo.pm
+    tv lib/Bar/Bash.pm
+    cd lib/Bar; tv Bash.pm
+
+to DWIM (see the upcoming description of how tv finds the main project
+directory to see how that last one DWIMs).
+
+=head2 Packages
+
+If a package name is given, then all source files and test scripts
+mentioned are scanned as well as all source files in the main project
+directory and its lib/ and t/ subdirectories are scanned, then any test
+scripts pertaining to the named packages are selected.  This allows
+
+    tv Foo
+
+to work.
+
+=head2 Untestable items
+
+It is a fatal error if a named item cannot be tested.  In this case,
+nothing is tested and tv prints a messages to STDERR and exits with a
+non-zero exit code.
+
+=head2 Finding the main project directory
+
+The main project directory is found by looking for "./t", "../t",
+"../../t" and so on until a directory containing a "t" directory is
+found.
+
+=head2 Code Scanner Details
+
+In source files, things that look like C<package> statements and some
+special POD are used to infer what test scripts to run.  In test
+scripts, some other special POD and things that look like C<use> or
+C<require> statements are used to infer what files and packages are
+being tested.  This is only performed if something other than a test
+script (or directory hierarchy containing test scripts and no source
+files) are given.
+
+The special POD to be used in source files is:
+
+    =for test_script foo.t bar.t
+
+and for test scripts is
+
+    =for file Foo.pm lib/Bar.pm
+
+and
+
+    =for package Foo
+
+The C<=for> paragraphs may span more than one line and define whitespace
+separated lists of items.  The filenames in the C<=for file> directive
+must be relative to the main project directory and not contain ".."
+names.
+
+The scanning for C<use>, C<require>, and C<package> statements is quite
+naive, but usually sufficient.  Things like POD documentation and
+multiline strings can fool the scanners, but this is not usually a
+problem.
+
+=head1 OPTIONS
+
+=over
+
+=item -n, --dry-run, --just-print, --recon
+
+Print out the make command but don't run it.
+
+=item -h, -?, --help
+
+Print out full help text (this page).
+
+=back
+
+See L<Test::Verbose|Test::Verbose> for details.
+
+=head1 COPYRIGHT
+
+    Copyright 2002, R. Barrie Slaymaker, Jr.  All Rights Reserved.
+
+=head1 LICENSE
+
+You may use this under the terms of any of the BSD, Artistic, or GPL
+licenses.
+
+=head1 AUTHOR
+
+    Barrie Slaymaker <barries@slaysys.com>
+
+=cut
+
+use Getopt::Long;
+use strict;
+
+sub usage {
+    my $message = shift;
+
+    my ( $verbosity, $output, $result ) =
+        defined $message ? ( 1, \*STDERR, 1 )
+                         : ( 2, \*STDOUT, 0 );
+
+    require Pod::Usage;
+    Pod::Usage::pod2usage( 
+        defined $message
+            ? ( -message    => $message )
+            : (),
+        -verbose    => $verbosity,
+        -exitstatus => $result, 
+        -output     => $output,
+    );
+}
+
+my %options;
+GetOptions(
+    "n|dry-run|recon|just-print!"       => \$options{JustPrint},
+    "h|help|?" => sub { usage },
+) or usage "";
+
+test_verbose @ARGV, \%options;
+
