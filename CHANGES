@@ -1,5 +1,24 @@
 CHANGES file for Test::Verbose
 
+
+    - Runs a .tvrc file in the project's root directory before any tests
+      are run.  This allows you to set env. vars, for instance.
+
+0.006 Thu Nov 14 13:38:38 EST 2002
+    - Added John Fetkovich's elisp code to map the tv command to a key
+      in a .emacs file.
+    - Don't chdir to the project dir until running make test so that
+      podchecker and perl -cw can find files.
+    - Don't prepend t/ to absolute test script paths
+    - Only run POD checks in a source file if POD detected (/^=/ matches)
+    - look for t/ or lib/ when scanning up, to handle projects with
+      no t/.  Ideally, this would search for t/ because lib/Foo/lib/...
+      might be present, but hey, this is BALGE for now.
+    - Prevent infinite looping if no project dir found.
+    - tolerate \s before ; in packages decls
+    - Don't examine $project_dir/lib/..., $project_dir unless a package
+      name is supplied.
+
 0.000_4 Wed Sep 25 07:30:54 EDT 2002
     - source code files and .pod files are run through podchecker
       by default.

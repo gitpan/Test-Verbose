@@ -1,6 +1,15 @@
 package Test::Verbose;
 
-$VERSION = 0.002;
+$VERSION = 0.007;
+
+#BEGIN {
+#    *CORE::GLOBAL::chdir = \&my_chdir;
+#}
+#
+#sub my_chdir {
+#    warn $_[0], " at ", join " ", map defined $_ ? $_ : "undef", caller(0), "\n";
+#    CORE::chdir( $_[0] );
+#}
 
 =head1 NAME
 
@@ -74,7 +83,7 @@ or
 are then selected.
 
 Before any test scripts are run, source files are run through
-L<C<podchecker>|podchecker> and through C<perl -cw>.  The former is to
+L<podchecker|podchecker> and through C<perl -cw>.  The former is to
 check POD, something normal test suites don't do, and the latter is
 because running C<make test ...> for a distribution with a lot of
 modules can be slow and I want to give per-module feedback ASAP.
@@ -106,6 +115,18 @@ and t subdirectories.  Files found there are not selected, but are used
 to determine what tests to run for a package.
 
 =back
+
+=head1 .tvrc file
+
+If a .tvrc file is found in a project's root directory, it is run just
+before any tests.  This allows you to set important env. vars:
+
+    $ENV{DBI_USER}="barries";
+    $ENV{DBI_PASS}="yuck";
+    1;
+
+The trailing "1;" is to ensure that this file returns a TRUE (in the sense
+of Perl truth) value, otherwise a fatar error will be reported.
 
 =head1 FUNCTIONS
 
@@ -149,7 +170,7 @@ Takes a list of options:
 
 =item Debug
 
-Runs the test scripts directly using perl -d.  Causes ExtUtils to
+Runs the test scripts directly using perl C<-d>.  Causes ExtUtils to
 be ignored.
 
 =item Dir
@@ -164,8 +185,11 @@ Print out the command to be executed.
 
 =item ExtUtils
 
-Don't use "make test TEST_VERBOSE=1 ...", use "perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' ..." instead.
-Useful if you don't have a Makefile.PL
+Don't use C<make test TEST_VERBOSE=1 ...>, use
+C<perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' ...>
+instead.
+Useful if you don't have a Makefile.PL; might not work on all versions
+of perl.
 
 =back
 
@@ -182,7 +206,7 @@ sub new {
     $tv->dir( undef );   ## clear old setting
     $tv->dir( "foo" );   ## prevent chdir( ".." ) searching
 
-Looks for t/ in the current directory or in any parent directory.
+Looks for t/ or lib/ in the current directory or in any parent directory.
 C<chdir()>s up the directory tree until t/ is found, then back to the
 directory it started in, so make sure you have permissions to C<chdir()>
 up and back.
@@ -203,8 +227,15 @@ sub dir {
         ## cd up until we find a directory that has a "t" subdirectory
         ## this is for folks whose editor's working directories might be
         ## down in t/ or lib/, etc.
-        chdir File::Spec->updir or die "tv: $! while cd()ing upwards looking for t/"
-            until -d "t";
+        my $last_d = $cwd;
+        until ( -d "t" || -d "lib" ) {
+            chdir( File::Spec->updir )
+                or die "tv: $! while cd()ing upwards looking for t/ or lib/";
+            my $new_d = Cwd::cwd;
+            die "tv: could not find t/ or lib/ in any parent of $cwd\n"
+                if length $new_d eq length $last_d;
+            $last_d = $new_d;
+        }
         $self->{Dir} = Cwd::cwd;
         warn "tv: ...found $self->{Dir}\n" if debugging;
         chdir $cwd or die "tv: $! chdir()ing back to '$cwd'";
@@ -368,7 +399,7 @@ Carp::confess "BUG: this code branch should be unreachable";
             # script.
         }
         else {
-            push @{$self->{PodChecks}}, $_;
+            # It's a code file
             push @{$self->{CompileChecks}}, $_;
             my @t = $self->test_scripts_for_file;
             if ( @t ) {
@@ -384,7 +415,7 @@ Carp::confess "BUG: this code branch should be unreachable";
     return sort grep !$seen{$_}++, map {
         ## Make all test scripts look like "t/foo.t"
         $_ = File::Spec->canonpath( $_ );
-        s{^(t[\\/])?}{t/};
+        s{^(?![\\/])(t[\\/])?}{t/};
         $_;
     } @test_scripts
 }
@@ -441,12 +472,13 @@ sub _scan_source_files {
     my @files = grep ! $self->is_package && ! $self->is_test_script,
         @{$self->{Names}};
 
-    if ( @files < @{$self->{Names}} ) {
+    if ( grep $self->is_package, @{$self->{Names}} ) {
         ## Scan all likely source files to look for those that
         ## might contain the package.
         push @files,
             $self->_traverse_dirs( File::Spec->catdir( $self->dir, 'lib') ),
             do {
+                # Look for source files in the project dir's top level.
                 opendir D, $self->dir;
                 my @f = grep
                     -f && $self->is_source_file,
@@ -476,10 +508,14 @@ sub _scan_source_files {
                 push @{$self->{Files}->{$abs_fn}}, @scripts;
                 push @{$self->{Packages}->{$package}}, @scripts;
             }
-            elsif ( /^\s*package\s+(\S+);/ ) {
+            elsif ( /^\s*package\s+(\S+)\s*;/ ) {
                 $package = $1;
-                warn "tv: $abs_fn contains $package\n" if debugging;
+                warn "tv: $abs_fn declares $package\n" if debugging;
                 push @{$self->{PackagesForFile}->{$abs_fn}}, $package;
+            }
+            elsif ( /^=/ ) {
+                push @{$self->{PodChecks}}, $code_file
+                    unless grep $_ eq $code_file, @{$self->{PodChecks}};
             }
         }
         close F or die "tv: $! closing $code_file";
@@ -498,7 +534,7 @@ sub _scan_test_scripts {
     my @all_test_scripts = grep /.t\z/, $self->_traverse_dirs( "t" );
     chdir $cwd or Carp::croak "$!: $cwd\n";
 
-    die "tv: no test scripts (t/*.t) found\n" unless @all_test_scripts;
+    warn "tv: no test scripts (t/*.t) found for project\n" unless @all_test_scripts;
 
     for my $test_script ( @all_test_scripts ) {
         warn "tv: scanning test script $test_script\n" if debugging;
@@ -635,6 +671,24 @@ sub exec_make_test {
     my $cwd = Cwd::cwd;
     my $d = $self->dir;
     chdir $d or die "tv: $!: $d";
+
+    my $rc_file = ".tvrc";
+    
+    $rc_file = -e $rc_file
+        ? do {
+            open RC_FILE, "<$rc_file" or die "$!: $rc_file";
+            local $/ = undef;
+            my $code = <RC_FILE>;
+            close RC_FILE;
+            my $fn = File::Spec->rel2abs( $rc_file, $d );
+            join "", "#line 1 $fn\n", $code;
+        }
+        : undef;
+
+warn "[[$rc_file]]";
+
+    eval $rc_file or die $@
+       if defined $rc_file;
 
     $self->{PodChecks} = [];
     $self->{CompileChecks} = [];

@@ -2,7 +2,7 @@
 
 =head1 NAME
 
-   tv - Run 'make TEST_VERBOSE=1' on one or more test files
+tv - Run 'make TEST_VERBOSE=1' on one or more test files
 
 =head1 SYNOPSIS
 
@@ -32,7 +32,7 @@ Test scripts are filenames that end in ".t".
 Passing C<tv> the names of test scripts selects them and runs them:
 
     tv t/foo.t
-    
+
 and
 
     tv t/*.t
@@ -58,7 +58,7 @@ selected.  This allows
 to DWIM (see the upcoming description of how tv finds the main project
 directory to see how that last one DWIMs).
 
-Source files are also run through L<C<podchecker>|podchecker unless the
+Source files are also run through L<C<podchecker>|podchecker> unless the
 --no-podchecker option is passed.  Source files ending in ".pod" are not
 considered testable except by C<podchecker>.
 
@@ -93,6 +93,25 @@ non-zero exit code.
 The main project directory is found by looking for "./t", "../t",
 "../../t" and so on until a directory containing a "t" directory is
 found.
+
+=head2 The .tvrc file
+
+If a .tvrc file is found in a project's root directory, it is run just
+before any tests.  This allows you to set important env. vars:
+
+    $ENV{DBI_USER}="barries";
+    $ENV{DBI_PASS}="yuck";
+    1;
+
+The trailing "1;" is to ensure that this file returns a TRUE (in the
+sense of Perl truth) value, otherwise a fatar error will be reported.
+
+Don't mess with Test-Verbose internals in this file, otherwise you
+may run any Perl code you like here.  If you ship a .tvrc file in
+your module, you should take great pains to make it portable.
+
+use strict is in effect, so you need to use C<my> for any variables,
+etc.
 
 =head2 Code Scanner Details
 
@@ -160,7 +179,7 @@ Print out the make command but don't run it.
 Invokes 
 
     perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' @scripts
-    
+
 instead of the default "make test" incantation.  Useful if you don't
 have a Makefile.PL.  Ignored if -d is used.
 

@@ -2,6 +2,7 @@ CHANGES
 MANIFEST
 MANIFEST.SKIP
 Makefile.PL
+README
 bin/tv
 lib/Test/Verbose.pm
 t/pretend/lib/Foo.pm
