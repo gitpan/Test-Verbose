@@ -1,6 +1,6 @@
 package Test::Verbose;
 
-$VERSION = 0.000_2;
+$VERSION = 0.000_3;
 
 =head1 NAME
 
@@ -140,6 +140,11 @@ in the current directory and its parents.
 =item JustPrint
 
 Print out the command to be executed.
+
+=item ExtUtils
+
+Don't use "make test TEST_VERBOSE=1 ...", use "perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' ..." instead.
+Useful if you don't have a Makefile.PL
 
 =back
 
@@ -546,13 +551,23 @@ chdir()s to C<$self->dir> and C<exec()>s make test.  Does not return.
 sub exec_make_test {
     my $self = shift;
 
-    my $test_files = "TEST_FILES=" . join " ", $self->test_scripts_for( @_ );
-
     my $cwd = Cwd::cwd;
     my $d = $self->dir;
     chdir $d or die "$!: $d";
 
-    my @cmd = ( qw( make test TEST_VERBOSE=1 ), $test_files );
+    my @cmd = $self->{ExtUtils}
+        ? (
+            $^X,
+            qw( -MExtUtils::Command::MM -e ), "test_harness(1,'lib')",
+            $self->test_scripts_for( @_ )
+        )
+        : do {
+	    my $test_files =
+                "TEST_FILES=" . join " ", $self->test_scripts_for( @_ );
+            ( qw( make test TEST_VERBOSE=1 ), $test_files );
+        };
+
+    local $ENV{PERL_DL_NONLAZY} = 1 if $self->{FakeIt};
 
     if ( $self->{JustPrint} ) {
         print

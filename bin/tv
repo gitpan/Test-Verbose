@@ -11,6 +11,7 @@
    $ tv t/foo.t t/bar.t ## make TEST_VERBOSE=1 "TEST_FILES=t/foo.t t/bar.t"
    $ tv t/*             ## Run all test scripts in t
    $ tv lib             ## Test all modules in lib
+   $ tv --ext-utils     ## Don't use make, use ExtUtils::Command::MM directly
 
 =head1 DESCRIPTION
 
@@ -112,13 +113,18 @@ problem.
 
 =over
 
+=item -h, -?, --help
+
+Print out full help text (this page).
+
 =item -n, --dry-run, --just-print, --recon
 
 Print out the make command but don't run it.
 
-=item -h, -?, --help
+=item --ext-utils
 
-Print out full help text (this page).
+Don't use "make test TEST_VERBOSE=1 ...", use "perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' ..." instead.
+Useful if you don't have a Makefile.PL
 
 =item --debug
 
@@ -169,6 +175,7 @@ GetOptions(
     "n|dry-run|recon|just-print!"       => \$options{JustPrint},
     "debug!"                            => sub { $ENV{TVDEBUG} = 1 },
     "h|help|?" => sub { usage },
+    "ext-utils"                         => \$options{ExtUtils},
 ) or usage "";
 
 eval "use Test::Verbose qw( test_verbose ); 1" or die $@;

@@ -1,0 +1,10 @@
+CHANGES file for Test::Verbose
+
+0.000_3 Tue Sep 17 22:43:29 EDT 2002
+    - Add --ext-utils option for <khampton@totalcinema.com>
+
+0.000_2
+    - make tests actually pass
+
+0.000_1
+    - Initial release
