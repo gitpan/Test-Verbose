@@ -1,6 +1,6 @@
 package Test::Verbose;
 
-$VERSION = 0.000_4;
+$VERSION = 0.001;
 
 =head1 NAME
 
@@ -66,6 +66,12 @@ or
 
 .  All test scripts pertaining to a given file and any packages in it
 are then selected.
+
+Before any test scripts are run, source files are run through
+L<C<podchecker>|podchecker> and through C<perl -cw>.  The former is to
+check POD, something normal test suites don't do, and the latter is
+because running C<make test ...> for a distribution with a lot of
+modules can be slow and I want to give per-module feedback ASAP.
 
 The paths listed in C<=for file> must be paths relative to the project
 root and not contain "..".  Hmmm, they can also be absolute paths, but
@@ -186,16 +192,16 @@ sub dir {
     $self->{Dir} = shift if @_;
     
     if ( defined wantarray && ! defined $self->{Dir} ) {
-        warn "Searching for project directory\n" if debugging;
+        warn "tv: searching for project directory\n" if debugging;
         my $cwd = Cwd::cwd;
         ## cd up until we find a directory that has a "t" subdirectory
         ## this is for folks whose editor's working directories might be
         ## down in t/ or lib/, etc.
-        chdir File::Spec->updir or die "$! while cd()ing upwards looking for t/"
+        chdir File::Spec->updir or die "tv: $! while cd()ing upwards looking for t/"
             until -d "t";
         $self->{Dir} = Cwd::cwd;
-        warn "...found $self->{Dir}\n" if debugging;
-        chdir $cwd or die "$! chdir()ing back to '$cwd'";
+        warn "tv: ...found $self->{Dir}\n" if debugging;
+        chdir $cwd or die "tv: $! chdir()ing back to '$cwd'";
     }
 
     return $self->{Dir};
@@ -295,10 +301,10 @@ Overload this to alter the default.
 
 =cut
 
-sub die_unhandled {
+sub unhandled {
     my $self = shift;
 
-    die "No test scripts found for: ", join( ", ", @_ ), "\n",
+    warn "tv: no test scripts found for: ", join( ", ", @_ ), "\n",
             "Try adding '=for test_script ...' to the source",
             @_ > 1 ? "s" : "",
             " or 'use ...;' or '=for package ...' to the test scripts\n";
@@ -323,10 +329,8 @@ sub test_scripts_for {
     my $self = shift;
 
     my @test_scripts;
-    my @oops;
 
     local $self->{Names} = [ $self->_traverse_dirs( @_ ) ];
-    $self->{PodChecks} = [];
 
     for ( @{$self->{Names}} ) {
         if ( $self->is_test_script ) {
@@ -338,7 +342,7 @@ sub test_scripts_for {
                 push @test_scripts, @t;
             }
             else {
-                push @oops, $_;
+                push @{$self->{Unhandled}}, $_;
             }
         }
         elsif ( -d ) {
@@ -348,7 +352,7 @@ Carp::confess "BUG: this code branch should be unreachable";
 #                push @test_scripts, @t;
 #            }
 #            else {
-#                push @oops, $_;
+#                push @{$self->{Unhandled}}, $_;
 #            }
         }
         elsif ( $self->is_pod_file ) {
@@ -359,17 +363,16 @@ Carp::confess "BUG: this code branch should be unreachable";
         }
         else {
             push @{$self->{PodChecks}}, $_;
+            push @{$self->{CompileChecks}}, $_;
             my @t = $self->test_scripts_for_file;
             if ( @t ) {
                 push @test_scripts, @t;
             }
             else {
-                push @oops, $_;
+                push @{$self->{Unhandled}}, $_;
             }
         }
     }
-
-    $self->die_unhandled( @oops ) if @oops;
 
     my %seen;
     return sort grep !$seen{$_}++, map {
@@ -402,7 +405,7 @@ sub _traverse_dirs {
         -d $dir
             ? do {
                 my @results;
-                warn "traversing $_\n" if debugging;
+                warn "tv: traversing $_\n" if debugging;
                 require File::Find;
                 File::Find::find(
                     sub {
@@ -450,8 +453,8 @@ sub _scan_source_files {
     my $cwd = Cwd::cwd;
 
     for my $code_file ( @files ) {
-        warn "Scanning code file $code_file\n" if debugging;
-        open F, $code_file or die "$!: $code_file";
+        warn "tv: scanning code file $code_file\n" if debugging;
+        open F, $code_file or die "tv: $!: $code_file";
         my $abs_fn = File::Spec->canonpath(
             File::Spec->rel2abs( $code_file, $cwd )
         );
@@ -462,18 +465,18 @@ sub _scan_source_files {
         while (<F>) {
             if ( /^=for\s+test_scripts?\s+(.*)/ ) {
                 my @scripts = _slurp_and_split;
-                warn "$abs_fn, $package =for test_scripts ", join( " ", @scripts ), "\n"
+                warn "tv: $abs_fn, $package =for test_scripts ", join( " ", @scripts ), "\n"
                     if debugging;
                 push @{$self->{Files}->{$abs_fn}}, @scripts;
                 push @{$self->{Packages}->{$package}}, @scripts;
             }
             elsif ( /^\s*package\s+(\S+);/ ) {
                 $package = $1;
-                warn "$abs_fn contains $package\n" if debugging;
+                warn "tv: $abs_fn contains $package\n" if debugging;
                 push @{$self->{PackagesForFile}->{$abs_fn}}, $package;
             }
         }
-        close F or die "$! closing $code_file";
+        close F or die "tv: $! closing $code_file";
     }
 
     1;
@@ -489,10 +492,10 @@ sub _scan_test_scripts {
     my @all_test_scripts = grep /.t\z/, $self->_traverse_dirs( "t" );
     chdir $cwd or Carp::croak "$!: $cwd\n";
 
-    die "No test scripts (t/*.t) found\n" unless @all_test_scripts;
+    die "tv: no test scripts (t/*.t) found\n" unless @all_test_scripts;
 
     for my $test_script ( @all_test_scripts ) {
-        warn "Scanning test script $test_script\n" if debugging;
+        warn "tv: scanning test script $test_script\n" if debugging;
         open F, File::Spec->catfile( $self->dir, $test_script )
             or Carp::croak "$!: $test_script\n";
 
@@ -501,7 +504,7 @@ sub _scan_test_scripts {
         while (<F>) {
             if ( /^=for\s+packages?\s+(.*)/ ) {
                 my @pkgs = _slurp_and_split;
-                warn "$test_script =for packages ", join( " ", @pkgs ), "\n"
+                warn "tv: $test_script =for packages ", join( " ", @pkgs ), "\n"
                     if debugging;
                 map push( @{$self->{Packages}->{$_}}, $test_script ), @pkgs;
             }
@@ -510,18 +513,18 @@ sub _scan_test_scripts {
                     File::Spec->canonpath(
                         File::Spec->rel2abs( $_, $self->dir )
                     ), _slurp_and_split;
-                warn "$test_script =for files ", join( " ", @files ), "\n"
+                warn "tv: $test_script =for files ", join( " ", @files ), "\n"
                     if debugging;
                 map
                     push( @{$self->{Files}->{$_}}, $test_script ),
                     @files;
             }
             elsif ( /\s*(use|require)\s+([\w:]+)/ ) {
-                warn "$test_script $1s $2\n" if debugging;
+                warn "tv: $test_script $1s $2\n" if debugging;
                 push @{$self->{Packages}->{$2}}, $test_script;
             }
         }
-        close F or die "$! closing $test_script";
+        close F or die "tv: $! closing $test_script";
     }
 
     1;
@@ -625,9 +628,11 @@ sub exec_make_test {
 
     my $cwd = Cwd::cwd;
     my $d = $self->dir;
-    chdir $d or die "$!: $d";
+    chdir $d or die "tv: $!: $d";
 
     $self->{PodChecks} = [];
+    $self->{CompileChecks} = [];
+    $self->{Unhandled} = [];
 
     my @scripts = @_ ? $self->test_scripts_for( @_ ) : ();
 
@@ -635,25 +640,32 @@ sub exec_make_test {
         ## NOTE: not using $^X here because podchecker may be from a
         ## newer perl.  Could lead to unexpected behavior, but very, very
         ## probably not.
-        print "podchecker ", join( " ", _esc @{$self->{PodChecks}} ), "\n"
+        warn "tv\$ podchecker ", join( " ", _esc @{$self->{PodChecks}} ), "\n"
             if $self->{JustPrint} || $self->{Verbose};
         system "podchecker", @{$self->{PodChecks}}
-            and warn "$!: podchecker $_\n"
+            and die "tv: POD checks failed, not running further tests.\n"
             unless $self->{JustPrint};
     }
 
+    if ( ! $self->{NoCompileChecks} && @{$self->{CompileChecks}} ) {
+        warn "tv\$ perl -Ilib -cw ", join( " ", _esc @{$self->{CompileChecks}} ), "\n"
+            if $self->{JustPrint} || $self->{Verbose};
+
+        system $^X, "-Ilib", "-cw", @{$self->{CompileChecks}}
+            and die "tv: compile test failed, not running further tests.\n"
+            unless $self->{JustPrint};
+    }
+
+    $self->unhandled( @{$self->{Unhandled}} )
+        if @{$self->{Unhandled}};
+
+    return unless @scripts;
+
     my $debug = $self->{Debug} || $self->{DebugRun};
-
-    print <<TOHERE;
-
-** Running in debug mode, use interrupt (often ^C), \$DB::single=1, **
-** or rerun with -dd if you need to enter the debugger             **
-
-TOHERE
 
     my @cmds =
         $debug
-            ? map [ $^X, "-w", "-d", $_ ], @scripts
+            ? map [ $^X, "-w", "-Ilib", "-d", $_ ], @scripts
             : [
                 $self->{ExtUtils}
                     ? (
@@ -679,22 +691,29 @@ TOHERE
     }
     local $ENV{PERLDB_OPTS} = $db_opts if length $db_opts;
 
+    warn <<TOHERE if $self->{DebugRun};
+
+tv: ** Running in debug mode, use interrupt (often ^C), \$DB::single=1, **
+tv: ** or rerun with -dd if you need to enter the debugger on startup. **
+
+TOHERE
+
     for ( @cmds ) {
         my $cmd = join " ", _esc @$_;
 
         $cmd = qq{PERL_DL_NONLAZY=1 $cmd}      if $nonlazy_dyn_link;
         $cmd = qq{PERLDB_OPTS="$db_opts" $cmd} if length $db_opts;
 
-        print "$cmd\n"
+        warn "tv\$ $cmd\n"
             if $self->{JustPrint} || $self->{Verbose};
 
         unless ( $self->{JustPrint} ) {
             if ( @cmds > 1 ) {
-                system @$_ and die "$!: $cmd\n";
+                system @$_ and die "tv: $!: $cmd\n";
             }
             else {
                 { exec @$_; }
-                warn "$!: $cmd\n";
+                warn "tv: $!: $cmd\n";
                 eval { kill -9, $$ };
                 exit 1;
             }
