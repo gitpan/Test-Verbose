@@ -1,7 +1,5 @@
 #!/usr/local/bin/perl -w
 
-use Test::Verbose qw( test_verbose );
-
 =head1 NAME
 
    tv - Run 'make TEST_VERBOSE=1' on one or more test files
@@ -122,6 +120,10 @@ Print out the make command but don't run it.
 
 Print out full help text (this page).
 
+=item --debug
+
+Turn on debugging output.
+
 =back
 
 See L<Test::Verbose|Test::Verbose> for details.
@@ -165,8 +167,11 @@ sub usage {
 my %options;
 GetOptions(
     "n|dry-run|recon|just-print!"       => \$options{JustPrint},
+    "debug!"                            => sub { $ENV{TVDEBUG} = 1 },
     "h|help|?" => sub { usage },
 ) or usage "";
 
-test_verbose @ARGV, \%options;
+eval "use Test::Verbose qw( test_verbose ); 1" or die $@;
+
+test_verbose( @ARGV, \%options );
 

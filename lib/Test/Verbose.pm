@@ -1,6 +1,6 @@
 package Test::Verbose;
 
-$VERSION = 0.000_1;
+$VERSION = 0.000_2;
 
 =head1 NAME
 
@@ -107,6 +107,8 @@ Shortcut for
 
 use strict;
 
+use constant debugging => $ENV{TVDEBUG} ? 1 : 0;
+
 BEGIN {
     require Exporter;
     require Carp;
@@ -167,9 +169,10 @@ for a name,
 sub dir {
     my $self = shift;
 
-    $self->{Dir} = shift;
+    $self->{Dir} = shift if @_;
     
     if ( defined wantarray && ! defined $self->{Dir} ) {
+        warn "Searching for project directory\n" if debugging;
         my $cwd = Cwd::cwd;
         ## cd up until we find a directory that has a "t" subdirectory
         ## this is for folks whose editor's working directories might be
@@ -177,6 +180,7 @@ sub dir {
         chdir File::Spec->updir or die "$! while cd()ing upwards looking for t/"
             until -d "t";
         $self->{Dir} = Cwd::cwd;
+        warn "...found $self->{Dir}\n" if debugging;
         chdir $cwd or die "$! chdir()ing back to '$cwd'";
     }
 
@@ -256,7 +260,7 @@ Overload this to alter the default.
 sub die_unhandled {
     my $self = shift;
 
-    die "No test scripts found: ", join( ", ", @_ ), "\n",
+    die "No test scripts found for: ", join( ", ", @_ ), "\n",
             "Try adding '=for test_script ...' to the source",
             @_ > 1 ? "s" : "",
             " or 'use ...;' or '=for package ...' to the test scripts\n";
@@ -288,10 +292,8 @@ sub test_scripts_for {
     for ( @{$self->{Names}} ) {
         if ( $self->is_test_script ) {
             push @test_scripts, $_;
-            next;
         }
-
-        if ( $self->is_package ) {
+        elsif ( $self->is_package ) {
             my @t = $self->test_scripts_for_package;
             if ( @t ) {
                 push @test_scripts, @t;
@@ -299,10 +301,8 @@ sub test_scripts_for {
             else {
                 push @oops, $_;
             }
-            next;
         }
-
-        if ( -d ) {
+        elsif ( -d ) {
             my @t = $self->test_scripts_for_dir;
             if ( @t ) {
                 push @test_scripts, @t;
@@ -310,15 +310,15 @@ sub test_scripts_for {
             else {
                 push @oops, $_;
             }
-            next;
-        }
-
-        my @t = $self->test_scripts_for_file;
-        if ( @t ) {
-            push @test_scripts, @t;
         }
         else {
-            push @oops, $_;
+            my @t = $self->test_scripts_for_file;
+            if ( @t ) {
+                push @test_scripts, @t;
+            }
+            else {
+                push @oops, $_;
+            }
         }
     }
 
@@ -336,6 +336,7 @@ sub test_scripts_for {
 
 sub _slurp_and_split {
     my @items = split /\s+/, $1;
+    local $_;
     while (<F>) {
         last if /^$/;
         push @items, split /\s+/;
@@ -354,6 +355,7 @@ sub _traverse_dirs {
         -d $dir
             ? do {
                 my @results;
+                warn "traversing $_\n" if debugging;
                 require File::Find;
                 File::Find::find(
                     sub {
@@ -398,8 +400,14 @@ sub _scan_source_files {
             };
     }
 
+    my $cwd = Cwd::cwd;
+
     for my $code_file ( @files ) {
+        warn "Scanning code file $code_file\n" if debugging;
         open F, $code_file or die "$!: $code_file";
+        my $abs_fn = File::Spec->canonpath(
+            File::Spec->rel2abs( $code_file, $cwd )
+        );
 
         my $package = "main";
         local $/ = "\n";
@@ -407,12 +415,15 @@ sub _scan_source_files {
         while (<F>) {
             if ( /^=for\s+test_scripts?\s+(.*)/ ) {
                 my @scripts = _slurp_and_split;
-                push @{$self->{Files}->{$code_file}}, @scripts;
+                warn "$abs_fn, $package =for test_scripts ", join( " ", @scripts ), "\n"
+                    if debugging;
+                push @{$self->{Files}->{$abs_fn}}, @scripts;
                 push @{$self->{Packages}->{$package}}, @scripts;
             }
             elsif ( /^\s*package\s+(\S+);/ ) {
                 $package = $1;
-                push @{$self->{PackagesForFile}->{$code_file}}, $package;
+                warn "$abs_fn contains $package\n" if debugging;
+                push @{$self->{PackagesForFile}->{$abs_fn}}, $package;
             }
         }
         close F or die "$! closing $code_file";
@@ -434,6 +445,7 @@ sub _scan_test_scripts {
     die "No test scripts (t/*.t) found\n" unless @all_test_scripts;
 
     for my $test_script ( @all_test_scripts ) {
+        warn "Scanning test script $test_script\n" if debugging;
         open F, File::Spec->catfile( $self->dir, $test_script )
             or Carp::croak "$!: $test_script\n";
 
@@ -441,19 +453,25 @@ sub _scan_test_scripts {
         local $_;
         while (<F>) {
             if ( /^=for\s+packages?\s+(.*)/ ) {
-                map push( @{$self->{Packages}->{$_}}, $test_script ),
-                    _slurp_and_split;
+                my @pkgs = _slurp_and_split;
+                warn "$test_script =for packages ", join( " ", @pkgs ), "\n"
+                    if debugging;
+                map push( @{$self->{Packages}->{$_}}, $test_script ), @pkgs;
             }
             elsif ( /^=for\s+files?\s+(.*)/ ) {
-                map {
+                my @files = map
                     File::Spec->canonpath(
                         File::Spec->rel2abs( $_, $self->dir )
-                    );
-                    push( @{$self->{Files}->{$_}}, $test_script );
-                } _slurp_and_split;
+                    ), _slurp_and_split;
+                warn "$test_script =for files ", join( " ", @files ), "\n"
+                    if debugging;
+                map
+                    push( @{$self->{Files}->{$_}}, $test_script ),
+                    @files;
             }
-            elsif ( /\s*(?:use|require)\s+([\w:]+)/ ) {
-                push @{$self->{Packages}->{$1}}, $test_script;
+            elsif ( /\s*(use|require)\s+([\w:]+)/ ) {
+                warn "$test_script $1s $2\n" if debugging;
+                push @{$self->{Packages}->{$2}}, $test_script;
             }
         }
         close F or die "$! closing $test_script";
@@ -482,6 +500,10 @@ sub test_scripts_for_file {
 
     $self->{ScannedSourceFiles} ||= $self->_scan_source_files;
     $self->{ScannedTestScripts} ||= $self->_scan_test_scripts;
+
+    local $_ = File::Spec->canonpath(
+        File::Spec->rel2abs( $_, Cwd::cwd )
+    );
 
     return (
         exists $self->{Files}->{$_}
