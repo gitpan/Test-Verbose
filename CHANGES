@@ -1,5 +1,13 @@
 CHANGES file for Test::Verbose
 
+0.000_4 Wed Sep 25 07:30:54 EDT 2002
+    - source code files and .pod files are run through podchecker
+      by default.
+    - -dd, --debug-stop runs the scripts in the debugger
+    - -d, --debug runs the test scripts in the debugger in NonStop mode
+    - -v, --verbose prints the commands out before they are run
+    - --debug-tv now debugs the tv command (instead of --debug).
+
 0.000_3 Tue Sep 17 22:43:29 EDT 2002
     - Add --ext-utils option for <khampton@totalcinema.com>
 

@@ -6,12 +6,13 @@
 
 =head1 SYNOPSIS
 
-   $ tv t/foo.t         ## make TEST_VERBOSE=1 TEST_FILES=t/foo.t
-   $ tv Foo.pm          ## Run all t/*.t test scripts for Foo.pm
-   $ tv t/foo.t t/bar.t ## make TEST_VERBOSE=1 "TEST_FILES=t/foo.t t/bar.t"
-   $ tv t/*             ## Run all test scripts in t
-   $ tv lib             ## Test all modules in lib
-   $ tv --ext-utils     ## Don't use make, use ExtUtils::Command::MM directly
+   $ tv t/foo.t         # make test TEST_VERBOSE=1 TEST_FILES=t/foo.t
+   $ tv -d t/foo.t      # similar, but turn on the debugger
+   $ tv Foo.pm          # Run all t/*.t test scripts for Foo.pm
+   $ tv t/foo.t t/bar.t # make TEST_VERBOSE=1 "TEST_FILES=t/foo.t t/bar.t"
+   $ tv t/*             # Run all test scripts in t
+   $ tv lib             # Test all modules in lib
+   $ tv --ext-utils     # Don't use make, use ExtUtils::Command::MM directly
 
 =head1 DESCRIPTION
 
@@ -26,7 +27,9 @@ laborious make incantation.
 
 =head2 Test scripts
 
-When a test script is given as a parameter, it is selected, so
+Test scripts are filenames that end in ".t".
+
+Passing C<tv> the names of test scripts selects them and runs them:
 
     tv t/foo.t
     
@@ -34,11 +37,12 @@ and
 
     tv t/*.t
 
-do the obvious things.
+select and run t/foo.t and t/*.t, repsectively.
 
-When something other than a test script (a file whose name ends in ".t")
-is specified, source files and test scripts are scanned to figure out
-what test scripts to run.
+For parameters that do not end in ".t", C<tv> scans the source code for
+them and for all test scripts in t/*.t to select the test scripts
+that apply.  There are two other parameter types: source files and
+Perl package (class) names.
 
 =head2 Source Files
 
@@ -53,6 +57,19 @@ selected.  This allows
 
 to DWIM (see the upcoming description of how tv finds the main project
 directory to see how that last one DWIMs).
+
+Source files are also run through L<C<podchecker>|podchecker unless the
+--no-podchecker option is passed.  Source files ending in ".pod" are not
+considered testable except by C<podchecker>.
+
+=head2 Directories
+
+If a directory name is passed, it is scanned for .t, .pm, .pod, and .pl
+files and these are treated as though they were mentioned on the command
+line.  This can go goofy if you run it on a test directory that contains
+.pm file that are used in the test suite--a private copy of
+L<Test::Differences|Test::Differences>, perhaps--that you don't want to
+test.  This is a bug that should be fixed.
 
 =head2 Packages
 
@@ -113,6 +130,23 @@ problem.
 
 =over
 
+=item -d, --debug
+
+Run test script(s) in NonStop debugging mode using perl -d.  The inline
+breakpoint C<$DB::single=1;> for the debugger is very useful with this option,
+as in the interrupt (often ^C) key.  See L<perldebug>.
+
+NOTE: this runs the test scripts directly using C<perl -d>, since
+L<ExtUtils::Command::MM|ExtUtils::Command::MM> does not offer the ability.
+Overrides --ext-utils.  Best used with a single test script.
+
+=item --dd, --debug-stop
+
+Like -d but in "normal" debug mode so the debugger stops at the first
+line of the test script.
+
+Most useful when running a single script.
+
 =item -h, -?, --help
 
 Print out full help text (this page).
@@ -123,16 +157,29 @@ Print out the make command but don't run it.
 
 =item --ext-utils
 
-Don't use "make test TEST_VERBOSE=1 ...", use "perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' ..." instead.
-Useful if you don't have a Makefile.PL
+Invokes 
 
-=item --debug
+    perl '-MExtUtils::Command::MM' -e 'test_harness(1,\'lib\')' @scripts
+    
+instead of the default "make test" incantation.  Useful if you don't
+have a Makefile.PL.  Ignored if -d is used.
 
-Turn on debugging output.
+=item --no-pod, --no-podchecker
+
+Do not run C<podchecker> on any source files found.
+
+=item -v, --verbose
+
+Print out the command to be run.
+
+=item --debug-tv
+
+Turn on tv's internal debugging output (does not affect the test
+scripts, see the C<-d> option).
 
 =back
 
-See L<Test::Verbose|Test::Verbose> for details.
+See L<Test::Verbose|Test::Verbose> for more details.
 
 =head1 COPYRIGHT
 
@@ -173,9 +220,13 @@ sub usage {
 my %options;
 GetOptions(
     "n|dry-run|recon|just-print!"       => \$options{JustPrint},
-    "debug!"                            => sub { $ENV{TVDEBUG} = 1 },
-    "h|help|?" => sub { usage },
+    "dd|debug-stop!"                    => \$options{Debug},
+    "d|debug!"                          => \$options{DebugRun},
+    "debug-tv!"                         => sub { $ENV{TVDEBUG} = 1 },
+    "no-pod|no-podchecker!"             => \$options{NoPodChecker},
     "ext-utils"                         => \$options{ExtUtils},
+    "h|help|?" => sub { usage },
+    "v|verbose"                         => \$options{Verbose},
 ) or usage "";
 
 eval "use Test::Verbose qw( test_verbose ); 1" or die $@;

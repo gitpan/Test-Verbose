@@ -1,10 +1,10 @@
 package Test::Verbose;
 
-$VERSION = 0.000_3;
+$VERSION = 0.000_4;
 
 =head1 NAME
 
-   Test::Verbose - Run 'make TEST_VERBOSE=1' on one or more test files
+Test::Verbose - Run 'make TEST_VERBOSE=1' on one or more test files
 
 =head1 SYNOPSIS
 
@@ -31,7 +31,8 @@ Before doing anything, this module identifies the working directory for
 the project by scanning the current directory and it's ancestors,
 stopping at the first directory that contains a "t" directory.
 
-If an explicitly named item cannot be tested, an exception is thrown.
+If an explicitly named item (other than POD files) cannot be tested, an
+exception is thrown.
 
 Here is how each name passed in is treated:
 
@@ -44,6 +45,9 @@ parsed.  Names of test scripts are recognized by ending in ".t" and, if
 they exist on the filesystem, by being a file (and not a directory).
 
 =item source file
+
+Source files ending in ".pl", ".pm", or ".pod" are run through
+C<podchecker>.
 
 Source files are parsed (very naively) looking for C<package> declarations
 and for test scripts listed in special POD comments:
@@ -74,7 +78,7 @@ existing on the filesystem.
 =item directory
 
 Directories are travered looking for files with the extensions ".t",
-".pm", or ".pl".  These are then treated as though they had been
+".pm", ".pod", or ".pl".  These are then treated as though they had been
 explicitly named.  Note that this notion of "looks like a source file"
 differs from that used when a source file is explicitly passed (where
 any extension other than .t may be used).
@@ -130,6 +134,11 @@ sub test_verbose {
 Takes a list of options:
 
 =over
+
+=item Debug
+
+Runs the test scripts directly using perl -d.  Causes ExtUtils to
+be ignored.
 
 =item Dir
 
@@ -212,14 +221,38 @@ sub is_test_script {
 }
 
 
+=item is_pod_file
+
+    $self->is_pod_file;         ## tests $_
+    $self->is_pod_file( $name );
+
+Returns true if the name looks like the name of a pod file (ends in
+.pod).  File does not need to exist, but must be a file if it
+does.
+
+Overload this to alter Test::Verbose's perceptions.
+
+=cut
+
+sub is_pod_file {
+    my $self = shift;
+    local $_ = shift if @_;
+    /\.(pod)\z/ && ( ! -e || -f _ );
+}
+
+
 =item is_source_file
 
     $self->is_source_file;         ## tests $_
     $self->is_source_file( $name );
 
-Returns true if the name looks like the name of a test script (ends in
-.pm or .pl).  File does not need to exist, but must be a file if it
+Returns true if the name looks like the name of a source file (ends in
+.pm, .pod or .pl).  File does not need to exist, but must be a file if it
 does.
+
+This is only used when traversing directory trees, otherwise a file name
+(ie not a package) is assumed to be a source file if it is not a test
+file.
 
 Overload this to alter Test::Verbose's perceptions.
 
@@ -228,7 +261,7 @@ Overload this to alter Test::Verbose's perceptions.
 sub is_source_file {
     my $self = shift;
     local $_ = shift if @_;
-    /\.(pm|pl)\z/ && ( ! -e || -f _ );
+    /\.(pm|pl|pod)\z/ && ( ! -e || -f _ );
 }
 
 
@@ -293,6 +326,7 @@ sub test_scripts_for {
     my @oops;
 
     local $self->{Names} = [ $self->_traverse_dirs( @_ ) ];
+    $self->{PodChecks} = [];
 
     for ( @{$self->{Names}} ) {
         if ( $self->is_test_script ) {
@@ -308,15 +342,23 @@ sub test_scripts_for {
             }
         }
         elsif ( -d ) {
-            my @t = $self->test_scripts_for_dir;
-            if ( @t ) {
-                push @test_scripts, @t;
-            }
-            else {
-                push @oops, $_;
-            }
+Carp::confess "BUG: this code branch should be unreachable";
+#            my @t = $self->test_scripts_for_dir;
+#            if ( @t ) {
+#                push @test_scripts, @t;
+#            }
+#            else {
+#                push @oops, $_;
+#            }
+        }
+        elsif ( $self->is_pod_file ) {
+            push @{$self->{PodChecks}}, $_;
+            push @test_scripts, $self->test_scripts_for_pod_file;
+            # It is not an error for a pod file to not have a test
+            # script.
         }
         else {
+            push @{$self->{PodChecks}}, $_;
             my @t = $self->test_scripts_for_file;
             if ( @t ) {
                 push @test_scripts, @t;
@@ -522,22 +564,40 @@ sub test_scripts_for_file {
 }
 
 
-sub test_scripts_for_dir {
+sub test_scripts_for_pod_file {
     my $self = shift;
     local $_ = shift if @_;
 
     $self->{ScannedSourceFiles} ||= $self->_scan_source_files;
     $self->{ScannedTestScripts} ||= $self->_scan_test_scripts;
 
+    local $_ = File::Spec->canonpath(
+        File::Spec->rel2abs( $_, Cwd::cwd )
+    );
+
     return
-        exists $self->{FilesInDir}->{$_}
-            ? map
-                $self->is_test_script
-                    ? $_
-                    : $self->test_scripts_for_file,
-                @{$self->{FilesInDir}->{$_}}
+        exists $self->{Files}->{$_}
+            ? @{$self->{Files}->{$_}}
             : ();
 }
+
+
+#sub test_scripts_for_dir {
+#    my $self = shift;
+#    local $_ = shift if @_;
+#
+#    $self->{ScannedSourceFiles} ||= $self->_scan_source_files;
+#    $self->{ScannedTestScripts} ||= $self->_scan_test_scripts;
+#
+#    return
+#        exists $self->{FilesInDir}->{$_}
+#            ? map
+#                $self->is_test_script
+#                    ? $_
+#                    : $self->test_scripts_for_file,
+#                @{$self->{FilesInDir}->{$_}}
+#            : ();
+#}
 
 
 =item exec_make_test
@@ -548,6 +608,18 @@ chdir()s to C<$self->dir> and C<exec()>s make test.  Does not return.
 
 =cut
 
+sub _esc {
+    map
+        m{[^\w./\\=:-]}
+            ? do {
+                local $_ = $_;
+                s/([\\'])/\\$1/g;
+                "'$_'";
+            }
+            : $_,
+        @_;
+}
+
 sub exec_make_test {
     my $self = shift;
 
@@ -555,37 +627,81 @@ sub exec_make_test {
     my $d = $self->dir;
     chdir $d or die "$!: $d";
 
-    my @cmd = $self->{ExtUtils}
-        ? (
-            $^X,
-            qw( -MExtUtils::Command::MM -e ), "test_harness(1,'lib')",
-            $self->test_scripts_for( @_ )
-        )
-        : do {
-	    my $test_files =
-                "TEST_FILES=" . join " ", $self->test_scripts_for( @_ );
-            ( qw( make test TEST_VERBOSE=1 ), $test_files );
-        };
+    $self->{PodChecks} = [];
 
-    local $ENV{PERL_DL_NONLAZY} = 1 if $self->{FakeIt};
+    my @scripts = @_ ? $self->test_scripts_for( @_ ) : ();
 
-    if ( $self->{JustPrint} ) {
-        print
-            join " ", map (
-            m{[^\w./\\=-]}
-                ? do {
-                    s/([\\'])/\\$1/g;
-                    "'$_'";
-                }
-                : $_, @cmd
-            ),
-            "\n";
-        exit 0;
+    if ( ! $self->{NoPodChecker} && @{$self->{PodChecks}} ) {
+        ## NOTE: not using $^X here because podchecker may be from a
+        ## newer perl.  Could lead to unexpected behavior, but very, very
+        ## probably not.
+        print "podchecker ", join( " ", _esc @{$self->{PodChecks}} ), "\n"
+            if $self->{JustPrint} || $self->{Verbose};
+        system "podchecker", @{$self->{PodChecks}}
+            and warn "$!: podchecker $_\n"
+            unless $self->{JustPrint};
     }
 
-    { exec @cmd }
-    chdir $cwd or warn "$! chdir( '$cwd' )\n";;
-    die "$!: ", join " ", @cmd;
+    my $debug = $self->{Debug} || $self->{DebugRun};
+
+    print <<TOHERE;
+
+** Running in debug mode, use interrupt (often ^C), \$DB::single=1, **
+** or rerun with -dd if you need to enter the debugger             **
+
+TOHERE
+
+    my @cmds =
+        $debug
+            ? map [ $^X, "-w", "-d", $_ ], @scripts
+            : [
+                $self->{ExtUtils}
+                    ? (
+                        $^X,
+                        qw( -MExtUtils::Command::MM -e ),
+                        "test_harness(1,'lib')",
+                        @scripts
+                    )
+                    : ( qw( make test TEST_VERBOSE=1 ),
+                        @_
+                            ? "TEST_FILES=" . join " ", @scripts
+                            : (),
+                    )
+                ];
+
+    my $nonlazy_dyn_link = $self->{ExtUtils} || $debug;
+    local $ENV{PERL_DL_NONLAZY} = 1 if $nonlazy_dyn_link;
+
+    my $db_opts = $ENV{PERLDB_OPTS} || "";
+    if ( $self->{DebugRun} ) {
+        $db_opts = " $db_opts" if length $db_opts;
+        $db_opts = "NonStop$db_opts";
+    }
+    local $ENV{PERLDB_OPTS} = $db_opts if length $db_opts;
+
+    for ( @cmds ) {
+        my $cmd = join " ", _esc @$_;
+
+        $cmd = qq{PERL_DL_NONLAZY=1 $cmd}      if $nonlazy_dyn_link;
+        $cmd = qq{PERLDB_OPTS="$db_opts" $cmd} if length $db_opts;
+
+        print "$cmd\n"
+            if $self->{JustPrint} || $self->{Verbose};
+
+        unless ( $self->{JustPrint} ) {
+            if ( @cmds > 1 ) {
+                system @$_ and die "$!: $cmd\n";
+            }
+            else {
+                { exec @$_; }
+                warn "$!: $cmd\n";
+                eval { kill -9, $$ };
+                exit 1;
+            }
+        }
+    }
+
+    exit 0;
 }
 
 =back
