@@ -1,6 +1,6 @@
 package Test::Verbose;
 
-$VERSION = 0.001;
+$VERSION = 0.002;
 
 =head1 NAME
 
@@ -8,7 +8,11 @@ Test::Verbose - Run 'make TEST_VERBOSE=1' on one or more test files
 
 =head1 SYNOPSIS
 
+    # from the command line.  man tv for more details.
+    $ tv lib/Foo.pm    # test this module
+    $ tv t/*.t         # run these tests
 
+    # from a module
     use Test::Verbose qw( test_verbose );
     test_verbose( @module_and_test_script_filenames );
 
@@ -47,7 +51,9 @@ they exist on the filesystem, by being a file (and not a directory).
 =item source file
 
 Source files ending in ".pl", ".pm", or ".pod" are run through
-C<podchecker>.
+C<podchecker>, then perl -cw before any tests are run.  This
+forces useful POD and does a quick shortcircuit syntax check of the
+source files before the possibly length make test gets run.
 
 Source files are parsed (very naively) looking for C<package> declarations
 and for test scripts listed in special POD comments:
